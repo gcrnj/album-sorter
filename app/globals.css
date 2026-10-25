@@ -31,3 +31,29 @@
 .photo-grid.drag-active .photo-card:hover{transform:none;box-shadow:none;border-color:#e9e9e3}
 .photo-grid.drag-active .photo-card:hover .photo-image img{transform:none}
 .photo-grid.drag-active .photo-card:hover .preview-hint{opacity:0}
+
+.photo-menu-anchor{position:absolute;z-index:4;top:7px;right:7px}
+.photo-menu-trigger{display:grid;place-items:center;width:31px;height:31px;border:1px solid #ffffffa8;border-radius:7px;background:#fffdf2e8;color:#4c564a;box-shadow:0 2px 8px #18241820;opacity:0;transition:opacity .15s,background .15s,color .15s}
+.photo-card:hover .photo-menu-trigger,.photo-menu-trigger:focus-visible,.photo-menu-trigger.open{opacity:1}
+.photo-menu-trigger:hover,.photo-menu-trigger.open{background:#fff;color:#344c3d}
+.photo-menu{position:absolute;top:37px;right:0;z-index:8;min-width:132px;padding:5px;border:1px solid #e5e6df;border-radius:8px;background:#fff;box-shadow:0 9px 25px #20281b22;animation:menu-in .12s ease-out}
+.photo-menu button{display:block;width:100%;padding:9px 10px;border:0;border-radius:5px;background:transparent;text-align:left;color:#4e554b;font-size:11px}
+.photo-menu button:hover,.photo-menu button:focus-visible{background:#f3f5f1;color:#344c3d}
+.photo-menu .delete-menu-item{color:#a15e54}
+.photo-menu .delete-menu-item:hover,.photo-menu .delete-menu-item:focus-visible{background:#fbf1ee;color:#9d5147}
+.bin-toggle.active{border-color:#cdd8ca;background:#eff3ed;color:#3f5b43}
+.bin-card .photo-menu-trigger{display:none}
+.restore-button{display:grid;place-items:center;flex:none}
+.bin-grid .photo-card{opacity:.9}
+.selection-active .photo-card{cursor:pointer}
+.selection-active .photo-image{cursor:pointer}
+.selection-status{display:inline-flex;margin-left:8px;padding:4px 8px;border-radius:5px;background:#e9efe7;color:#3f5b43;font-size:10px;font-weight:700}
+.photo-card.is-selected{border-color:#71896e;box-shadow:0 0 0 2px #71896e35}
+.photo-card.is-selected .photo-image::after{position:absolute;z-index:1;inset:0;content:"";background:#344c3d35;pointer-events:none}
+.sequence-badge{z-index:2}
+.selection-badge{position:absolute;z-index:3;top:8px;right:8px;display:grid;place-items:center;width:28px;height:28px;border:2px solid #fff;border-radius:50%;background:#fffE;color:#65715f;box-shadow:0 2px 8px #1f2d1b40;font-size:11px}
+.photo-card.is-selected .selection-badge{background:#344c3d;color:#fff;border-color:#fff;transform:scale(1.04)}
+.bulk-action{border-color:#d4ddd1!important;background:#edf2eb!important;color:#3d5941!important}
+@keyframes menu-in{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
+@media(hover:none){.photo-menu-trigger{opacity:1}}
+@media(prefers-reduced-motion:reduce){.photo-menu{animation:none}}

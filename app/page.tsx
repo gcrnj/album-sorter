@@ -7,6 +7,7 @@ import { generateRenamePlan, movePhoto } from "@/lib/rename-plan";
 type Photo = { id: string; name: string; size: number; modified: number; thumbnail: string };
 type Folder = { id: string; name: string; pathLabel: string; photos: Photo[]; skipped: number; thumbnailsPending?: number };
 type RenameRow = { id: string; from: string; to: string; position: number };
+type BinPhoto = { photo: Photo; orderIndex: number; previousId?: string; nextId?: string };
 
 const initialSettings = { prefix: "Wedding", start: 100, interval: 100, width: 5 };
 
@@ -25,6 +26,7 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
     search: <><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.5 4.5"/></>,
     undo: <><path d="M9 14 4 9l5-5"/><path d="M4 9h9a7 7 0 0 1 0 14h-2"/></>,
     redo: <><path d="m15 14 5-5-5-5"/><path d="M20 9h-9a7 7 0 0 0 0 14h2"/></>,
+    more: <><circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="19" cy="12" r="1" fill="currentColor"/></>,
     grid: <><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></>,
     list: <><path d="M9 6h12M9 12h12M9 18h12"/><circle cx="4" cy="6" r=".7" fill="currentColor"/><circle cx="4" cy="12" r=".7" fill="currentColor"/><circle cx="4" cy="18" r=".7" fill="currentColor"/></>,
     check: <path d="m5 12 4 4L19 6"/>,
@@ -61,6 +63,12 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const [preview, setPreview] = useState(false);
   const [selected, setSelected] = useState<Photo | null>(null);
+  const [temporaryBin, setTemporaryBin] = useState<BinPhoto[]>([]);
+  const [showTemporaryBin, setShowTemporaryBin] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [activeMenu, setActiveMenu] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const indicatorRef = useRef<HTMLSpanElement>(null);
   const dragGhostRef = useRef<HTMLDivElement>(null);
@@ -136,6 +144,7 @@ export default function Home() {
   const ordered = useMemo(() => order.map((id) => photos.get(id)).filter((photo): photo is Photo => Boolean(photo)), [order, photos]);
   const changed = order.join("|") !== baseline.join("|") || JSON.stringify(settings) !== JSON.stringify(savedSettings);
   const visible = useMemo(() => ordered.filter((photo) => photo.name.toLowerCase().includes(search.toLowerCase())), [ordered, search]);
+  const binPhotos = useMemo(() => temporaryBin.map(({ photo }) => photo), [temporaryBin]);
   const filenameError = useMemo(() => { try { generateRenamePlan([], settings); return ""; } catch (cause) { return (cause as Error).message; } }, [settings]);
   const plan = useMemo<RenameRow[]>(() => { try { return generateRenamePlan(ordered, settings); } catch { return []; } }, [ordered, settings]);
   const changedRows = plan.filter((row) => row.from !== row.to);
@@ -161,6 +170,7 @@ export default function Home() {
       setProgress(100); setFolder(result); setOrder(result.photos.map((photo) => photo.id)); setBaseline(result.photos.map((photo) => photo.id));
       setThumbnailsRemaining(result.thumbnailsPending || 0); setThumbnailRevision(0);
       setHistory([]); setRedoStack([]); setSearch(""); setSettings(initialSettings); setSavedSettings(initialSettings); setNotice(`${result.photos.length} photos ready · Subfolders are excluded`);
+      setTemporaryBin([]); setShowTemporaryBin(false); setSelectionMode(false); setSelectedIds([]); setActiveMenu(null);
       setTimeout(() => setNotice(""), 4500);
     } catch (cause) { if ((cause as Error).message !== "Folder selection cancelled") setError((cause as Error).message); }
     finally { setBusy(""); setProgress(0); }
@@ -174,6 +184,40 @@ export default function Home() {
   function sortByName() { if (folder) commitOrder([...order].sort((a, b) => (photos.get(a)?.name || "").localeCompare(photos.get(b)?.name || "", undefined, { numeric: true, sensitivity: "base" }))); }
   function undo() { if (!history.length) return; setRedoStack((items) => [...items, order]); setOrder(history[history.length - 1]); setHistory(history.slice(0, -1)); }
   function redo() { if (!redoStack.length) return; setHistory((items) => [...items, order]); setOrder(redoStack[redoStack.length - 1]); setRedoStack(redoStack.slice(0, -1)); }
+
+  function moveToTemporaryBin(ids: string[]) {
+    const removing = new Set(ids);
+    const entries = order.flatMap((id, orderIndex) => {
+      if (!removing.has(id)) return [];
+      const photo = photos.get(id);
+      return photo ? [{ photo, orderIndex, previousId: order[orderIndex - 1], nextId: order[orderIndex + 1] }] : [];
+    });
+    if (!entries.length) return;
+    setTemporaryBin((items) => [...items, ...entries]);
+    setOrder(order.filter((id) => !removing.has(id)));
+    setSelectedIds([]); setSelectionMode(false); setActiveMenu(null);
+    setNotice(`${entries.length} ${entries.length === 1 ? "photo" : "photos"} moved to the temporary bin`);
+    window.setTimeout(() => setNotice(""), 3500);
+  }
+
+  function restoreBinPhotos(entries: BinPhoto[]) {
+    const restoring = [...entries].sort((a, b) => a.orderIndex - b.orderIndex);
+    const next = [...order];
+    for (const entry of restoring) {
+      const nextIndex = entry.nextId ? next.indexOf(entry.nextId) : -1;
+      const previousIndex = entry.previousId ? next.indexOf(entry.previousId) : -1;
+      const index = nextIndex >= 0 ? nextIndex : previousIndex >= 0 ? previousIndex + 1 : Math.min(entry.orderIndex, next.length);
+      next.splice(index, 0, entry.photo.id);
+    }
+    setOrder(next);
+    const restoringIds = new Set(entries.map(({ photo }) => photo.id));
+    setTemporaryBin((items) => items.filter(({ photo }) => !restoringIds.has(photo.id)));
+    setSelectedIds([]); setSelectionMode(false);
+  }
+
+  function togglePhotoSelection(id: string) {
+    setSelectedIds((items) => items.includes(id) ? items.filter((item) => item !== id) : [...items, id]);
+  }
 
   async function save() {
     if (!folder || !changedRows.length || conflicts.length || filenameError) return;
@@ -205,7 +249,7 @@ export default function Home() {
   async function undoSave() {
     if (!window.confirm("Restore the filenames from your last save? This will rename those files on disk.")) return;
     setBusy("Restoring previous filenames…"); setError("");
-    try { const result = await api<{ recordId: string; photos: Photo[] }>("/api/undo"); setFolder((current) => current ? { ...current, photos: result.photos } : current); setOrder(result.photos.map((photo) => photo.id)); setBaseline(result.photos.map((photo) => photo.id)); setSettings(initialSettings); setSavedSettings(initialSettings); setNotice("Last rename operation reversed"); }
+    try { const result = await api<{ recordId: string; photos: Photo[] }>("/api/undo"); setFolder((current) => current ? { ...current, photos: result.photos } : current); setOrder(result.photos.map((photo) => photo.id)); setBaseline(result.photos.map((photo) => photo.id)); setTemporaryBin([]); setShowTemporaryBin(false); setSelectedIds([]); setSelectionMode(false); setSettings(initialSettings); setSavedSettings(initialSettings); setNotice("Last rename operation reversed"); }
     catch (cause) { setError((cause as Error).message); }
     finally { setBusy(""); }
   }
@@ -214,6 +258,14 @@ export default function Home() {
     function beforeUnload(event: BeforeUnloadEvent) { if (changed) { event.preventDefault(); event.returnValue = ""; } }
     window.addEventListener("beforeunload", beforeUnload); return () => window.removeEventListener("beforeunload", beforeUnload);
   }, [changed]);
+
+  useEffect(() => {
+    if (!activeMenu) return;
+    function dismissMenu(event: PointerEvent) { if (!menuRef.current?.contains(event.target as Node)) setActiveMenu(null); }
+    function dismissOnEscape(event: KeyboardEvent) { if (event.key === "Escape") setActiveMenu(null); }
+    document.addEventListener("pointerdown", dismissMenu); document.addEventListener("keydown", dismissOnEscape);
+    return () => { document.removeEventListener("pointerdown", dismissMenu); document.removeEventListener("keydown", dismissOnEscape); };
+  }, [activeMenu]);
 
   const folderId = folder?.id;
   const isPreparingThumbnails = thumbnailsRemaining > 0;
@@ -325,42 +377,57 @@ export default function Home() {
         <label className="search-box"><Icon name="search" size={17}/><input placeholder="Find a photo by filename…" value={search} onChange={(event) => setSearch(event.target.value)}/>{search && <button aria-label="Clear search" onClick={() => setSearch("")}><Icon name="close" size={14}/></button>}</label>
         <div className="toolbar-spacer"/>
         <button className="toolbar-button" onClick={addPhotos} title="Add photos from this folder" disabled={!!busy}>+ Add photos</button>
+        {temporaryBin.length > 0 && <button className={`toolbar-button bin-toggle ${showTemporaryBin ? "active" : ""}`} onClick={() => { setShowTemporaryBin((value) => !value); setSelectedIds([]); setSelectionMode(false); setActiveMenu(null); }}>{showTemporaryBin ? "← Back to photos" : `Temporary bin · ${temporaryBin.length}`}</button>}
+        {selectionMode ? <>
+          <button className="toolbar-button" onClick={() => setSelectedIds((showTemporaryBin ? binPhotos : visible).map((photo) => photo.id))}>Select all shown</button>
+          <button className="toolbar-button" onClick={() => setSelectedIds([])} disabled={!selectedIds.length}>Clear selection</button>
+          <button className="toolbar-button bulk-action" onClick={() => showTemporaryBin ? restoreBinPhotos(temporaryBin.filter(({ photo }) => selectedIds.includes(photo.id))) : moveToTemporaryBin(selectedIds)} disabled={!selectedIds.length}>{showTemporaryBin ? `Restore ${selectedIds.length}` : `Move ${selectedIds.length} to bin`}</button>
+          <button className="text-button" onClick={() => { setSelectionMode(false); setSelectedIds([]); }}>Done</button>
+        </> : <button className="toolbar-button" onClick={() => setSelectionMode(true)}>Select photos</button>}
         <button className="toolbar-button" onClick={sortByName} title="Sort by original filename">Name A–Z</button>
         <span className="toolbar-separator"/>
         <button className="icon-button" onClick={undo} disabled={!history.length} aria-label="Undo reorder" title="Undo"><Icon name="undo"/></button>
         <button className="icon-button" onClick={redo} disabled={!redoStack.length} aria-label="Redo reorder" title="Redo"><Icon name="redo"/></button>
         <span className="toolbar-separator"/>
         <div className="segmented" aria-label="Photo view"><button className={density === "comfortable" ? "active" : ""} onClick={() => setDensity("comfortable")} aria-label="Grid view" title="Grid view"><Icon name="grid" size={16}/></button><button className={density === "compact" ? "active" : ""} onClick={() => setDensity("compact")} aria-label="List view" title="List view"><Icon name="list" size={16}/></button></div>
-        <button className="text-button reset-button" onClick={() => commitOrder([...baseline])}>Reset order</button>
+        <button className="text-button reset-button" onClick={() => commitOrder(baseline.filter((id) => !temporaryBin.some(({ photo }) => photo.id === id)))}>Reset order</button>
       </section>
       {folder.skipped > 0 && <div className="inline-note">{folder.skipped} unsupported or unreadable {folder.skipped === 1 ? "file was" : "files were"} skipped.</div>}
-      <div className="grid-meta"><span><b>{visible.length}</b> {search ? "matching photos" : "photos"}{thumbnailsRemaining > 0 && <span className="preview-progress"> · Preparing {thumbnailsRemaining} previews</span>}</span><span>Drag any photo to set the sequence <span className="meta-dot">·</span> Subfolders excluded</span></div>
+      <div className="grid-meta"><span><b>{showTemporaryBin ? temporaryBin.length : visible.length}</b> {showTemporaryBin ? "photos in temporary bin" : search ? "matching photos" : "photos"}{selectionMode && <span className="selection-status">{selectedIds.length} selected</span>}{thumbnailsRemaining > 0 && <span className="preview-progress"> · Preparing {thumbnailsRemaining} previews</span>}</span><span>{showTemporaryBin ? "These photos are still on disk" : "Drag any photo to set the sequence"} <span className="meta-dot">·</span> Subfolders excluded</span></div>
       <div
-        className={`photo-grid ${density} ${dragId ? "drag-active" : ""}`}
+        className={`photo-grid ${density} ${dragId ? "drag-active" : ""} ${showTemporaryBin ? "bin-grid" : ""} ${selectionMode ? "selection-active" : ""}`}
         ref={gridRef}
         onDragOver={(event) => {
           if (!dragId) event.preventDefault();
         }}
         onDrop={(event) => { if (!dragId) event.preventDefault(); }}
       >
-        {visible.map((photo) => {
+        {(showTemporaryBin ? binPhotos : visible).map((photo) => {
+          if (showTemporaryBin) return <article className={`photo-card bin-card ${selectedIds.includes(photo.id) ? "is-selected" : ""}`} key={photo.id}>
+            <button className="photo-image" onClick={() => selectionMode ? togglePhotoSelection(photo.id) : setSelected(photo)} aria-pressed={selectionMode ? selectedIds.includes(photo.id) : undefined} aria-label={selectionMode ? `${selectedIds.includes(photo.id) ? "Deselect" : "Select"} ${photo.name}` : `Preview ${photo.name}`}><Image src={`${photo.thumbnail}&v=${thumbnailRevision}`} alt="" fill sizes={density === "compact" ? "14vw" : "20vw"} unoptimized/>{selectionMode && <span className="selection-badge">{selectedIds.includes(photo.id) ? <Icon name="check" size={14}/> : ""}</span>}</button>
+            <div className="photo-caption"><span title={photo.name}>{photo.name}</span>{!selectionMode && <button className="restore-button" onClick={() => restoreBinPhotos([temporaryBin.find(({ photo: itemPhoto }) => itemPhoto.id === photo.id)!])} aria-label={`Restore ${photo.name}`} title="Restore to photo list"><Icon name="undo" size={15}/></button>}</div>
+          </article>;
           const sequence = order.indexOf(photo.id) + 1;
           return <article
             key={photo.id}
-            className={`photo-card ${dragId === photo.id ? "is-dragging" : ""}`}
+            className={`photo-card ${dragId === photo.id ? "is-dragging" : ""} ${selectedIds.includes(photo.id) ? "is-selected" : ""}`}
             data-photo-id={photo.id}
-            draggable
+            draggable={!selectionMode}
             onDragStart={(event) => { setDragId(photo.id); updateStoredInsertIndex(null); const emptyDragImage = document.createElement("canvas"); emptyDragImage.width = 1; emptyDragImage.height = 1; event.dataTransfer.setDragImage(emptyDragImage, 0, 0); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", photo.id); }}
             onDragEnd={() => { setDragId(null); updateStoredInsertIndex(null); }}
           >
-            <button className="photo-image" onClick={() => setSelected(photo)} aria-label={`Preview ${photo.name}`}><Image src={`${photo.thumbnail}&v=${thumbnailRevision}`} alt="" fill sizes={density === "compact" ? "14vw" : "20vw"} unoptimized/><span className="sequence-badge">{String(sequence).padStart(2, "0")}</span><span className="preview-hint">View</span></button>
+            <button className="photo-image" onClick={() => selectionMode ? togglePhotoSelection(photo.id) : setSelected(photo)} aria-pressed={selectionMode ? selectedIds.includes(photo.id) : undefined} aria-label={selectionMode ? `${selectedIds.includes(photo.id) ? "Deselect" : "Select"} ${photo.name}` : `Preview ${photo.name}`}><Image src={`${photo.thumbnail}&v=${thumbnailRevision}`} alt="" fill sizes={density === "compact" ? "14vw" : "20vw"} unoptimized/><span className="sequence-badge">{String(sequence).padStart(2, "0")}</span>{selectionMode && <span className="selection-badge">{selectedIds.includes(photo.id) ? <Icon name="check" size={14}/> : ""}</span>}</button>
+            {!selectionMode && <div className="photo-menu-anchor" ref={activeMenu === photo.id ? menuRef : null}>
+              <button className={`photo-menu-trigger ${activeMenu === photo.id ? "open" : ""}`} aria-label={`Actions for ${photo.name}`} aria-haspopup="menu" aria-expanded={activeMenu === photo.id} title="Photo actions" onClick={() => setActiveMenu((current) => current === photo.id ? null : photo.id)}><Icon name="more" size={18}/></button>
+              {activeMenu === photo.id && <div className="photo-menu" role="menu"><button role="menuitem" onClick={() => { setSelected(photo); setActiveMenu(null); }}>View</button><button role="menuitem" className="delete-menu-item" onClick={() => moveToTemporaryBin([photo.id])}>Delete</button></div>}
+            </div>}
             <div className="photo-caption"><span title={photo.name}>{photo.name}</span><button aria-label={`Move ${photo.name} earlier`} disabled={sequence === 1} onClick={() => move(photo.id, sequence - 2)}>↑</button><button aria-label={`Move ${photo.name} later`} disabled={sequence === order.length} onClick={() => move(photo.id, sequence)}>↓</button></div>
           </article>;
         })}
       </div>
       {dragId && draggedPhoto && <div ref={dragGhostRef} className="drag-ghost" aria-hidden="true"><Image src={`${draggedPhoto.thumbnail}&v=${thumbnailRevision}`} alt="" width={140} height={100} unoptimized/></div>}
       <span ref={indicatorRef} className={`drop-indicator ${density === "compact" ? "horizontal" : "vertical"}`} data-insert-index={insertIndex ?? undefined} aria-hidden="true" />
-      {visible.length === 0 && <div className="no-results"><Icon name="search" size={24}/><p>No photos match “{search}”</p><button className="text-button" onClick={() => setSearch("")}>Clear search</button></div>}
+      {(showTemporaryBin ? temporaryBin.length === 0 : visible.length === 0) && <div className="no-results">{showTemporaryBin ? <><Icon name="check" size={24}/><p>Your temporary bin is empty</p><button className="text-button" onClick={() => setShowTemporaryBin(false)}>Back to photos</button></> : <><Icon name="search" size={24}/><p>No photos match “{search}”</p><button className="text-button" onClick={() => setSearch("")}>Clear search</button></>}</div>}
       <footer className="action-bar"><div className="action-summary"><span className="summary-count">{ordered.length}<small>photos</small></span><span className="action-divider"/><span><b>{changedRows.length}</b> files will be renamed</span><span className="safe-label"><span>✓</span> Originals stay unchanged</span></div><div className="action-buttons"><button className="button button-secondary" disabled={!changedRows.length || !!filenameError} onClick={() => setPreview(true)}>Preview rename</button><button className="button button-primary save-button" disabled={!changed || !!busy || !!conflicts.length || !!filenameError} onClick={() => setPreview(true)}><Icon name="check" size={17}/>{busy || "Save"}</button></div></footer>
     </>}
 
@@ -374,7 +441,7 @@ export default function Home() {
       <div className="rename-table"><div className="rename-table-head"><span>POSITION</span><span>BEFORE</span><span>AFTER</span></div><div className="rename-table-body">{plan.map((row) => <div className="rename-row" key={row.id}><span className="position-tag">{String(row.position).padStart(2, "0")}</span><span title={row.from}>{row.from}</span><span className={row.from === row.to ? "same-name" : "new-name"} title={row.to}>{row.to}</span></div>)}</div></div>
       <div className="modal-foot"><button className="button button-secondary" onClick={() => setPreview(false)}>Cancel</button><button className="button button-primary" disabled={!changedRows.length || !!conflicts.length || !!filenameError || !!busy} onClick={save}><Icon name="check" size={16}/>Save {changedRows.length} changes</button></div>
     </section></div>}
-    {selected && <div className="modal-backdrop photo-backdrop" onClick={() => setSelected(null)}><section className="large-preview" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}><button className="icon-button close-preview" onClick={() => setSelected(null)} aria-label="Close preview"><Icon name="close"/></button><Image src={`${selected.thumbnail}&v=${thumbnailRevision}`} alt={selected.name} width={1200} height={900} unoptimized/><div><b>{selected.name}</b><span>Position {String(order.indexOf(selected.id) + 1).padStart(2, "0")} of {order.length}</span></div></section></div>}
+    {selected && <div className="modal-backdrop photo-backdrop" onClick={() => setSelected(null)}><section className="large-preview" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}><button className="icon-button close-preview" onClick={() => setSelected(null)} aria-label="Close preview"><Icon name="close"/></button><Image src={`${selected.thumbnail}&v=${thumbnailRevision}`} alt={selected.name} width={1200} height={900} unoptimized/><div><b>{selected.name}</b><span>{temporaryBin.some(({ photo }) => photo.id === selected.id) ? "In temporary bin" : `Position ${String(order.indexOf(selected.id) + 1).padStart(2, "0")} of ${order.length}`}</span></div></section></div>}
     <div className="app-footer"><span>Wedding Photo Sorter</span><span>Local by design <span>✳</span></span></div>
   </main>;
 }
