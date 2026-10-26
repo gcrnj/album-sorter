@@ -55,6 +55,7 @@ export default function Home() {
   const [history, setHistory] = useState<string[][]>([]);
   const [redoStack, setRedoStack] = useState<string[][]>([]);
   const [dragId, setDragId] = useState<string | null>(null);
+  const [dragIds, setDragIds] = useState<string[]>([]);
   const [busy, setBusy] = useState("");
   const [progress, setProgress] = useState(0);
   const [thumbnailsRemaining, setThumbnailsRemaining] = useState(0);
@@ -122,8 +123,12 @@ export default function Home() {
       dragGhost.style.display = "block";
     }
     if (indicator) {
-      const sourceIndex = cards.findIndex((card) => card.dataset.photoId === dragId);
-      const noOp = slot === sourceIndex || slot === sourceIndex + 1;
+      const visibleDragPositions = cards.flatMap((card, index) => dragIds.includes(card.dataset.photoId || "") ? [index] : []);
+      const firstDragPosition = Math.min(...visibleDragPositions);
+      const lastDragPosition = Math.max(...visibleDragPositions);
+      const isContiguousGroup = visibleDragPositions.length > 0 && visibleDragPositions.length === dragIds.filter((id) => cards.some((card) => card.dataset.photoId === id)).length
+        && lastDragPosition - firstDragPosition + 1 === visibleDragPositions.length;
+      const noOp = isContiguousGroup && slot >= firstDragPosition && slot <= lastDragPosition + 1;
       indicator.className = `drop-indicator ${nearestGap.orientation}`;
       indicator.style.left = `${horizontal ? nearestGap.left : (nearestGap.left + nearestGap.right) / 2}px`;
       indicator.style.top = `${horizontal ? (nearestGap.top + nearestGap.bottom) / 2 : nearestGap.top}px`;
@@ -137,7 +142,7 @@ export default function Home() {
     const speed = 18;
     if (clientY < edge) window.scrollBy({ top: -speed, behavior: "auto" });
     else if (clientY > window.innerHeight - edge) window.scrollBy({ top: speed, behavior: "auto" });
-  }, [density, dragId, updateStoredInsertIndex]);
+  }, [density, dragIds, updateStoredInsertIndex]);
 
   const photos = useMemo(() => new Map(folder?.photos.map((photo) => [photo.id, photo]) || []), [folder]);
   const draggedPhoto = dragId ? photos.get(dragId) : undefined;
@@ -286,7 +291,7 @@ export default function Home() {
   useEffect(() => {
     if (!dragId) return;
     function cancelDrag(event: KeyboardEvent) {
-      if (event.key === "Escape") { updateStoredInsertIndex(null); setDragId(null); }
+      if (event.key === "Escape") { updateStoredInsertIndex(null); setDragId(null); setDragIds([]); }
     }
     window.addEventListener("keydown", cancelDrag);
     return () => window.removeEventListener("keydown", cancelDrag);
@@ -295,6 +300,7 @@ export default function Home() {
   useEffect(() => {
     if (!dragId) return;
     const activeDragId = dragId;
+    const activeDragIds = dragIds.length ? dragIds : [activeDragId];
     function containsInsertionGap(clientX: number, clientY: number) {
       const grid = gridRef.current;
       if (!grid) return false;
@@ -327,19 +333,21 @@ export default function Home() {
       event.preventDefault();
       event.stopImmediatePropagation();
       updateInsertIndex(event.clientX, event.clientY);
-      const sourceId = event.dataTransfer?.getData("text/plain") || activeDragId;
       const activeInsertIndex = insertIndexRef.current;
       if (activeInsertIndex !== null) {
-        const sourceIndex = order.indexOf(sourceId);
         const insertionIndex = activeInsertIndex < visible.length
           ? order.indexOf(visible[activeInsertIndex].id)
           : visible.length ? order.indexOf(visible[visible.length - 1].id) + 1 : -1;
-        if (sourceIndex >= 0 && insertionIndex >= 0) {
-          const nextOrder = movePhoto(order, sourceId, insertionIndex - (sourceIndex < insertionIndex ? 1 : 0));
+        const movingIds = order.filter((id) => activeDragIds.includes(id));
+        if (movingIds.length && insertionIndex >= 0) {
+          const movingSet = new Set(movingIds);
+          const removedBeforeTarget = order.slice(0, insertionIndex).filter((id) => movingSet.has(id)).length;
+          const nextOrder = order.filter((id) => !movingSet.has(id));
+          nextOrder.splice(insertionIndex - removedBeforeTarget, 0, ...movingIds);
           if (nextOrder.join() !== order.join()) commitOrder(nextOrder);
         }
       }
-      setDragId(null);
+      setDragId(null); setDragIds([]);
       updateStoredInsertIndex(null);
     }
     window.addEventListener("dragover", onDragOver, true);
@@ -350,7 +358,7 @@ export default function Home() {
       window.removeEventListener("drag", onDragOver, true);
       window.removeEventListener("drop", onDrop, true);
     };
-  }, [commitOrder, density, dragId, order, updateInsertIndex, updateStoredInsertIndex, visible]);
+  }, [commitOrder, density, dragId, dragIds, order, updateInsertIndex, updateStoredInsertIndex, visible]);
 
   return <main className="app-shell">
     <header className="topbar">
@@ -392,8 +400,9 @@ export default function Home() {
         <div className="segmented" aria-label="Photo view"><button className={density === "comfortable" ? "active" : ""} onClick={() => setDensity("comfortable")} aria-label="Grid view" title="Grid view"><Icon name="grid" size={16}/></button><button className={density === "compact" ? "active" : ""} onClick={() => setDensity("compact")} aria-label="List view" title="List view"><Icon name="list" size={16}/></button></div>
         <button className="text-button reset-button" onClick={() => commitOrder(baseline.filter((id) => !temporaryBin.some(({ photo }) => photo.id === id)))}>Reset order</button>
       </section>
+      {showTemporaryBin && <div className="bin-heading"><div><b>Temporary bin</b><span>Photos here stay on disk until you restore them.</span></div><button className="button button-secondary" onClick={() => { setShowTemporaryBin(false); setSelectedIds([]); setSelectionMode(false); }}>← Back to main photos</button></div>}
       {folder.skipped > 0 && <div className="inline-note">{folder.skipped} unsupported or unreadable {folder.skipped === 1 ? "file was" : "files were"} skipped.</div>}
-      <div className="grid-meta"><span><b>{showTemporaryBin ? temporaryBin.length : visible.length}</b> {showTemporaryBin ? "photos in temporary bin" : search ? "matching photos" : "photos"}{selectionMode && <span className="selection-status">{selectedIds.length} selected</span>}{thumbnailsRemaining > 0 && <span className="preview-progress"> · Preparing {thumbnailsRemaining} previews</span>}</span><span>{showTemporaryBin ? "These photos are still on disk" : "Drag any photo to set the sequence"} <span className="meta-dot">·</span> Subfolders excluded</span></div>
+      <div className="grid-meta"><span><b>{showTemporaryBin ? temporaryBin.length : visible.length}</b> {showTemporaryBin ? "photos in temporary bin" : search ? "matching photos" : "photos"}{selectionMode && <span className="selection-status">{selectedIds.length} selected</span>}{thumbnailsRemaining > 0 && <span className="preview-progress"> · Preparing {thumbnailsRemaining} previews</span>}</span><span>{showTemporaryBin ? "These photos are still on disk" : selectionMode ? "Drag a selected photo to move the group" : "Drag any photo to set the sequence"} <span className="meta-dot">·</span> Subfolders excluded</span></div>
       <div
         className={`photo-grid ${density} ${dragId ? "drag-active" : ""} ${showTemporaryBin ? "bin-grid" : ""} ${selectionMode ? "selection-active" : ""}`}
         ref={gridRef}
@@ -410,11 +419,11 @@ export default function Home() {
           const sequence = order.indexOf(photo.id) + 1;
           return <article
             key={photo.id}
-            className={`photo-card ${dragId === photo.id ? "is-dragging" : ""} ${selectedIds.includes(photo.id) ? "is-selected" : ""}`}
+            className={`photo-card ${dragIds.includes(photo.id) ? "is-dragging" : ""} ${selectedIds.includes(photo.id) ? "is-selected" : ""}`}
             data-photo-id={photo.id}
-            draggable={!selectionMode}
-            onDragStart={(event) => { setDragId(photo.id); updateStoredInsertIndex(null); const emptyDragImage = document.createElement("canvas"); emptyDragImage.width = 1; emptyDragImage.height = 1; event.dataTransfer.setDragImage(emptyDragImage, 0, 0); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", photo.id); }}
-            onDragEnd={() => { setDragId(null); updateStoredInsertIndex(null); }}
+            draggable
+            onDragStart={(event) => { const idsToMove = selectedIds.includes(photo.id) ? order.filter((id) => selectedIds.includes(id)) : [photo.id]; setDragId(photo.id); setDragIds(idsToMove); updateStoredInsertIndex(null); const emptyDragImage = document.createElement("canvas"); emptyDragImage.width = 1; emptyDragImage.height = 1; event.dataTransfer.setDragImage(emptyDragImage, 0, 0); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", JSON.stringify(idsToMove)); }}
+            onDragEnd={() => { setDragId(null); setDragIds([]); updateStoredInsertIndex(null); }}
           >
             <button className="photo-image" onClick={() => selectionMode ? togglePhotoSelection(photo.id) : setSelected(photo)} aria-pressed={selectionMode ? selectedIds.includes(photo.id) : undefined} aria-label={selectionMode ? `${selectedIds.includes(photo.id) ? "Deselect" : "Select"} ${photo.name}` : `Preview ${photo.name}`}><Image src={`${photo.thumbnail}&v=${thumbnailRevision}`} alt="" fill sizes={density === "compact" ? "14vw" : "20vw"} unoptimized/><span className="sequence-badge">{String(sequence).padStart(2, "0")}</span>{selectionMode && <span className="selection-badge">{selectedIds.includes(photo.id) ? <Icon name="check" size={14}/> : ""}</span>}</button>
             {!selectionMode && <div className="photo-menu-anchor" ref={activeMenu === photo.id ? menuRef : null}>
@@ -425,7 +434,7 @@ export default function Home() {
           </article>;
         })}
       </div>
-      {dragId && draggedPhoto && <div ref={dragGhostRef} className="drag-ghost" aria-hidden="true"><Image src={`${draggedPhoto.thumbnail}&v=${thumbnailRevision}`} alt="" width={140} height={100} unoptimized/></div>}
+      {dragId && draggedPhoto && <div ref={dragGhostRef} className="drag-ghost" aria-hidden="true"><Image src={`${draggedPhoto.thumbnail}&v=${thumbnailRevision}`} alt="" width={140} height={100} unoptimized/>{dragIds.length > 1 && <span className="drag-ghost-count">{dragIds.length}</span>}</div>}
       <span ref={indicatorRef} className={`drop-indicator ${density === "compact" ? "horizontal" : "vertical"}`} data-insert-index={insertIndex ?? undefined} aria-hidden="true" />
       {(showTemporaryBin ? temporaryBin.length === 0 : visible.length === 0) && <div className="no-results">{showTemporaryBin ? <><Icon name="check" size={24}/><p>Your temporary bin is empty</p><button className="text-button" onClick={() => setShowTemporaryBin(false)}>Back to photos</button></> : <><Icon name="search" size={24}/><p>No photos match “{search}”</p><button className="text-button" onClick={() => setSearch("")}>Clear search</button></>}</div>}
       <footer className="action-bar"><div className="action-summary"><span className="summary-count">{ordered.length}<small>photos</small></span><span className="action-divider"/><span><b>{changedRows.length}</b> files will be renamed</span><span className="safe-label"><span>✓</span> Originals stay unchanged</span></div><div className="action-buttons"><button className="button button-secondary" disabled={!changedRows.length || !!filenameError} onClick={() => setPreview(true)}>Preview rename</button><button className="button button-primary save-button" disabled={!changed || !!busy || !!conflicts.length || !!filenameError} onClick={() => setPreview(true)}><Icon name="check" size={17}/>{busy || "Save"}</button></div></footer>

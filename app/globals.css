@@ -27,6 +27,7 @@
 @media(prefers-reduced-motion:reduce){.drop-indicator{animation:none!important;transition:none!important}}
 .drag-ghost{position:fixed;z-index:2147483646;display:none;left:0;top:0;width:140px;height:100px;overflow:hidden;transform:translate(-50%,-50%);border:3px solid #fff;border-radius:9px;box-shadow:0 7px 24px #17241cb5;opacity:.92;pointer-events:none}
 .drag-ghost img{width:100%;height:100%;object-fit:cover}
+.drag-ghost-count{position:absolute;top:5px;right:5px;display:grid;place-items:center;min-width:24px;height:24px;padding:0 5px;border:2px solid #fff;border-radius:999px;background:#344c3d;color:#fff;font-size:11px;font-weight:700}
 .photo-card.is-dragging{opacity:.4;border-style:solid;border-color:#e9e9e3}
 .photo-grid.drag-active .photo-card:hover{transform:none;box-shadow:none;border-color:#e9e9e3}
 .photo-grid.drag-active .photo-card:hover .photo-image img{transform:none}
@@ -42,10 +43,17 @@
 .photo-menu .delete-menu-item{color:#a15e54}
 .photo-menu .delete-menu-item:hover,.photo-menu .delete-menu-item:focus-visible{background:#fbf1ee;color:#9d5147}
 .bin-toggle.active{border-color:#cdd8ca;background:#eff3ed;color:#3f5b43}
+.bin-heading{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:14px;padding:13px 15px;border:1px solid #e5e9e1;border-radius:8px;background:#f4f6f1}
+.bin-heading>div{display:flex;flex-direction:column;gap:4px}
+.bin-heading b{color:#405342;font-size:12px}
+.bin-heading span{color:#858b81;font-size:10px}
+.bin-heading .button{padding:8px 11px}
 .bin-card .photo-menu-trigger{display:none}
 .restore-button{display:grid;place-items:center;flex:none}
 .bin-grid .photo-card{opacity:.9}
 .selection-active .photo-card{cursor:pointer}
+.selection-active .photo-card.is-selected{cursor:grab}
+.selection-active .photo-card.is-selected:active{cursor:grabbing}
 .selection-active .photo-image{cursor:pointer}
 .selection-status{display:inline-flex;margin-left:8px;padding:4px 8px;border-radius:5px;background:#e9efe7;color:#3f5b43;font-size:10px;font-weight:700}
 .photo-card.is-selected{border-color:#71896e;box-shadow:0 0 0 2px #71896e35}
@@ -57,3 +65,4 @@
 @keyframes menu-in{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
 @media(hover:none){.photo-menu-trigger{opacity:1}}
 @media(prefers-reduced-motion:reduce){.photo-menu{animation:none}}
+@media(max-width:680px){.bin-heading{align-items:flex-start;flex-direction:column}.bin-heading .button{align-self:flex-start}}
